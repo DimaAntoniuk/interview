@@ -1,0 +1,16 @@
+{
+  "workflow_id": "content_gen_demo_001",
+  "status": "completed",
+  "duration_ms": 256.3519477844238,
+  "completed_steps": [
+    "research",
+    "blog_post",
+    "twitter",
+    "email",
+    "linkedin",
+    "meta",
+    "quality_check",
+    "format_publish"
+  ],
+  "failed_steps": []
+}
