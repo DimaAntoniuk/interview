@@ -67,32 +67,26 @@ class WorkflowExecutor:
         )
 
         try:
-            # Validate and build dependency graph
             dependency_graph = self._build_dependency_graph(steps)
             step_map = {step.name: step for step in steps}
 
-            # Track execution
             pending_steps = set(step.name for step in steps)
             completed_steps: Set[str] = set()
             failed_steps: Set[str] = set()
 
-            # Execute steps in topological order with parallelization
             while pending_steps:
-                # Get steps that can be executed (all dependencies met)
                 executable = self._get_executable_steps(
                     pending_steps, completed_steps, dependency_graph
                 )
 
                 if not executable:
                     if pending_steps:
-                        # Circular dependency or all remaining steps failed
                         remaining = ", ".join(pending_steps)
                         raise ValueError(
                             f"Cannot execute remaining steps due to unmet dependencies: {remaining}"
                         )
                     break
 
-                # Execute steps in parallel (up to max_parallel_steps)
                 tasks = []
                 for step_name in executable[: self.max_parallel_steps]:
                     step = step_map[step_name]
@@ -106,15 +100,12 @@ class WorkflowExecutor:
                     }
                     tasks.append(self._execute_step_with_tracking(step, context, state))
 
-                # Wait for all tasks to complete
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Process results
                 for step_name, result in zip(executable[: self.max_parallel_steps], results):
                     pending_steps.remove(step_name)
 
                     if isinstance(result, Exception):
-                        # Step failed
                         failed_steps.add(step_name)
                         state.step_results[step_name] = StepResult(
                             status=StepStatus.FAILED,
@@ -123,10 +114,8 @@ class WorkflowExecutor:
                             duration_ms=0.0,
                         )
                     else:
-                        # Step succeeded
                         completed_steps.add(step_name)
 
-            # Check final status
             if failed_steps:
                 state.status = WorkflowStatus.FAILED
                 raise Exception(f"Workflow failed. Failed steps: {', '.join(failed_steps)}")
@@ -174,7 +163,6 @@ class WorkflowExecutor:
             attempts += 1
 
             try:
-                # Execute with timeout
                 output = await asyncio.wait_for(step.execute(context), timeout=step.timeout_seconds)
 
                 duration_ms = (time.time() - start_time) * 1000
@@ -204,7 +192,6 @@ class WorkflowExecutor:
                     continue
                 break
 
-        # All retries exhausted
         duration_ms = (time.time() - start_time) * 1000
 
         return StepResult(
@@ -223,7 +210,6 @@ class WorkflowExecutor:
         max_delay = 5.0  # 5 seconds
         delay = min(base_delay * (2**attempt), max_delay)
 
-        # Add jitter (±25%)
         import random
 
         jitter = delay * 0.25 * (2 * random.random() - 1)
@@ -246,14 +232,12 @@ class WorkflowExecutor:
         graph: Dict[str, Set[str]] = {}
 
         for step in steps:
-            # Validate dependencies exist
             for dep in step.depends_on:
                 if dep not in step_names:
                     raise ValueError(f"Step '{step.name}' depends on '{dep}' which does not exist")
 
             graph[step.name] = set(step.depends_on)
 
-        # Check for circular dependencies
         self._validate_no_cycles(graph)
 
         return graph
@@ -357,7 +341,6 @@ class WorkflowExecutor:
         Raises:
             ValueError: If workflow cannot be resumed
         """
-        # Load existing state
         state = await self.state_store.load_state(workflow_id)
         if state is None:
             raise ValueError(f"Workflow '{workflow_id}' not found")
@@ -365,7 +348,6 @@ class WorkflowExecutor:
         if state.status == WorkflowStatus.COMPLETED:
             raise ValueError(f"Workflow '{workflow_id}' already completed")
 
-        # Create new steps list excluding completed steps
         completed_step_names = state.get_completed_steps()
         remaining_steps = [step for step in steps if step.name not in completed_step_names]
 
@@ -374,5 +356,4 @@ class WorkflowExecutor:
             await self.state_store.save_state(state)
             return state
 
-        # Execute remaining steps
         return await self.execute_workflow(workflow_id, remaining_steps, state.input_data)
