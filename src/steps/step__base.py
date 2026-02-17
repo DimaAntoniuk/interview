@@ -1,9 +1,34 @@
 """Base class for workflow steps."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.llm.llm__client import LLMClient
+
+
+def condition_min_output_words(step_name: str, min_words: int) -> Callable[[Dict[str, Any]], bool]:
+    """
+    Build a condition that is met when a dependency step's output has at least min_words.
+
+    Args:
+        step_name: Name of the step whose output to count words from
+        min_words: Minimum number of words required
+
+    Returns:
+        A callable(context) that returns True if condition is met
+    """
+    def _check(context: Dict[str, Any]) -> bool:
+        step_outputs = context.get("step_outputs", {})
+        if step_name not in step_outputs:
+            return False
+        output = step_outputs[step_name]
+        if output is None:
+            return False
+        text = str(output).strip()
+        word_count = len(text.split()) if text else 0
+        return word_count >= min_words
+
+    return _check
 
 
 class Step(ABC):
@@ -16,6 +41,7 @@ class Step(ABC):
         timeout_seconds: float = 30.0,
         max_retries: int = 3,
         llm_client: Optional[LLMClient] = None,
+        condition: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> None:
         """
         Initialize a workflow step.
@@ -26,12 +52,30 @@ class Step(ABC):
             timeout_seconds: Maximum execution time in seconds
             max_retries: Maximum number of retry attempts
             llm_client: LLM client for AI operations
+            condition: Optional callable(context) -> bool; if False, step is skipped
         """
         self.name = name
         self.depends_on = depends_on or []
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.llm_client = llm_client
+        self.condition = condition
+
+    def is_condition_met(self, context: Dict[str, Any]) -> bool:
+        """
+        Return whether the step's condition is satisfied (and thus the step should run).
+
+        If no condition is set, returns True.
+
+        Args:
+            context: Execution context with input_data and step_outputs
+
+        Returns:
+            True if the step should execute, False if it should be skipped
+        """
+        if self.condition is None:
+            return True
+        return self.condition(context)
 
     @abstractmethod
     async def execute(self, context: Dict[str, Any]) -> Any:
