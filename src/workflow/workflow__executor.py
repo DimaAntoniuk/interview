@@ -133,10 +133,26 @@ class WorkflowExecutor:
 
         return state
 
+    def _should_execute_step(self, step: Step, context: Dict[str, Any]) -> bool:
+        """
+        Return whether the step should run (condition is met).
+        Blocks execution when the step's condition is not met.
+        """
+        return step.is_condition_met(context)
+
     async def _execute_step_with_tracking(
         self, step: Step, context: Dict[str, Any], state: WorkflowState
     ) -> None:
         """Execute a step with progress tracking."""
+        if not self._should_execute_step(step, context):
+            state.step_results[step.name] = StepResult(
+                status=StepStatus.SKIPPED,
+                output=None,
+                duration_ms=0.0,
+            )
+            self._emit_progress_event(state.workflow_id, "step_complete", step.name, StepStatus.SKIPPED)
+            return
+
         self._emit_progress_event(state.workflow_id, "step_start", step.name, StepStatus.RUNNING)
 
         result = await self._execute_step(step, context)

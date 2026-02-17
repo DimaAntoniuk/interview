@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from typing import Any, Dict
 
-from src.steps.step__base import Step
+from src.steps.step__base import Step, condition_min_output_words
 from src.workflow.workflow__executor import WorkflowExecutor
 from src.workflow.workflow__state import InMemoryStateStore
 from src.workflow.workflow__types import StepStatus, WorkflowStatus
@@ -20,8 +20,9 @@ class MockStep(Step):
         output: Any = None,
         should_fail: bool = False,
         delay_ms: int = 10,
+        condition: Any = None,
     ) -> None:
-        super().__init__(name, depends_on, timeout_seconds=5.0)
+        super().__init__(name, depends_on, timeout_seconds=5.0, condition=condition)
         self.output_value = output or f"output_{name}"
         self.should_fail = should_fail
         self.delay_ms = delay_ms
@@ -227,6 +228,78 @@ class TestWorkflowExecutor(unittest.TestCase):
 
         self.assertEqual(state.step_results["step1"].output, "initial_value")
         self.assertEqual(state.step_results["step2"].output, "processed_initial_value")
+
+    async def test_conditional_step_skipped_when_condition_not_met(self) -> None:
+        """Test that a step with condition is skipped when condition is not met."""
+        steps = [
+            MockStep(name="step1", output="short"),  # 1 word
+            MockStep(
+                name="step2",
+                depends_on=["step1"],
+                output="output2",
+                condition=condition_min_output_words("step1", min_words=5),
+            ),
+        ]
+
+        state = await self.executor.execute_workflow(
+            workflow_id="test_conditional_skip",
+            steps=steps,
+            input_data={},
+        )
+
+        self.assertEqual(state.status, WorkflowStatus.COMPLETED)
+        self.assertEqual(state.step_results["step1"].status, StepStatus.COMPLETED)
+        self.assertEqual(state.step_results["step2"].status, StepStatus.SKIPPED)
+        self.assertIsNone(state.step_results["step2"].output)
+        self.assertEqual(steps[1].execution_count, 0)
+
+    async def test_conditional_step_runs_when_condition_met(self) -> None:
+        """Test that a step with condition runs when condition is met."""
+        steps = [
+            MockStep(name="step1", output="one two three four five six"),  # 6 words
+            MockStep(
+                name="step2",
+                depends_on=["step1"],
+                output="output2",
+                condition=condition_min_output_words("step1", min_words=5),
+            ),
+        ]
+
+        state = await self.executor.execute_workflow(
+            workflow_id="test_conditional_run",
+            steps=steps,
+            input_data={},
+        )
+
+        self.assertEqual(state.status, WorkflowStatus.COMPLETED)
+        self.assertEqual(state.step_results["step1"].status, StepStatus.COMPLETED)
+        self.assertEqual(state.step_results["step2"].status, StepStatus.COMPLETED)
+        self.assertEqual(state.step_results["step2"].output, "output2")
+        self.assertEqual(steps[1].execution_count, 1)
+
+    async def test_skipped_step_unblocks_dependents(self) -> None:
+        """Test that dependents of a skipped step can still run (dependency resolution)."""
+        steps = [
+            MockStep(name="step1", output="x"),  # 1 word
+            MockStep(
+                name="step2",
+                depends_on=["step1"],
+                output="skipped",
+                condition=condition_min_output_words("step1", min_words=10),
+            ),
+            MockStep(name="step3", depends_on=["step2"], output="after_skip"),
+        ]
+
+        state = await self.executor.execute_workflow(
+            workflow_id="test_skip_deps",
+            steps=steps,
+            input_data={},
+        )
+
+        self.assertEqual(state.status, WorkflowStatus.COMPLETED)
+        self.assertEqual(state.step_results["step2"].status, StepStatus.SKIPPED)
+        self.assertEqual(state.step_results["step3"].status, StepStatus.COMPLETED)
+        self.assertEqual(state.step_results["step3"].output, "after_skip")
 
 
 if __name__ == "__main__":
