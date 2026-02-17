@@ -13,7 +13,7 @@ This repository contains a **partially implemented** multi-agent workflow orches
 
 ```bash
 # Install dependencies
-poetry install
+poetry install 
 
 # Verify setup
 poetry run python examples/run_workflow.py
